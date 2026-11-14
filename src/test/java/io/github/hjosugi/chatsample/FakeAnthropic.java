@@ -6,8 +6,10 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
+import java.util.stream.IntStream;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -22,11 +24,21 @@ final class FakeAnthropic {
 
 	private static final JsonMapper json = JsonMapper.shared();
 
+	/**
+	 * Among the events of a reply, a pause of 50 milliseconds.
+	 */
+	static final String PAUSE = "pause";
+
 	private final HttpServer server;
 
 	private final Function<JsonNode, List<String>> replies;
 
 	final List<JsonNode> requests = new CopyOnWriteArrayList<>();
+
+	/**
+	 * Completes when the client closes a reply before its end.
+	 */
+	volatile CompletableFuture<Void> clientGone = new CompletableFuture<>();
 
 	/**
 	 * @param replies the events to stream for a request body, as {@link #text} and
@@ -47,6 +59,11 @@ final class FakeAnthropic {
 		this.server.stop(0);
 	}
 
+	void reset() {
+		this.requests.clear();
+		this.clientGone = new CompletableFuture<>();
+	}
+
 	private void handle(HttpExchange exchange) throws IOException {
 		JsonNode body = json.readTree(exchange.getRequestBody().readAllBytes());
 		this.requests.add(body);
@@ -54,9 +71,19 @@ final class FakeAnthropic {
 		exchange.sendResponseHeaders(200, 0);
 		try (OutputStream out = exchange.getResponseBody()) {
 			for (String event : this.replies.apply(body)) {
+				if (event.equals(PAUSE)) {
+					Thread.sleep(50);
+					continue;
+				}
 				out.write(event.getBytes(StandardCharsets.UTF_8));
 				out.flush();
 			}
+		}
+		catch (IOException ex) {
+			this.clientGone.complete(null);
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
 		}
 	}
 
@@ -95,6 +122,19 @@ final class FakeAnthropic {
 		}
 		events.add(event("content_block_stop", "{\"type\":\"content_block_stop\",\"index\":0}"));
 		events.addAll(messageEnd("end_turn"));
+		return events;
+	}
+
+	/**
+	 * A reply of many words, one every 50 milliseconds.
+	 */
+	static List<String> slowText(int words) {
+		String[] text = IntStream.range(0, words).mapToObj((word) -> "word" + word + " ").toArray(String[]::new);
+		List<String> events = new ArrayList<>();
+		for (String event : text(text)) {
+			events.add(event);
+			events.add(PAUSE);
+		}
 		return events;
 	}
 

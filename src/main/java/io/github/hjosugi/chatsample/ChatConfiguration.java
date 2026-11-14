@@ -4,6 +4,7 @@ import java.util.Map;
 
 import io.github.hjosugi.springchat.ChatPromptCustomizer;
 
+import org.springframework.ai.anthropic.http.okhttp.AnthropicHttpClientBuilderCustomizer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.source.InvalidConfigurationPropertyValueException;
 import org.springframework.context.annotation.Bean;
@@ -33,6 +34,15 @@ class ChatConfiguration {
 		// SecurityConfiguration lets no one chat without signing in, so there is a principal.
 		return (prompt, request) -> prompt.tools(tools)
 			.toolContext(Map.of(OrderTools.USER, request.principal().getName()));
+	}
+
+	/**
+	 * Ends a stopped reply at Anthropic too, which Spring AI 2.0.2 does not (see
+	 * {@link CancelOnCloseInterceptor}).
+	 */
+	@Bean
+	AnthropicHttpClientBuilderCustomizer cancelStoppedReplies() {
+		return (builder) -> builder.interceptor(new CancelOnCloseInterceptor());
 	}
 
 }

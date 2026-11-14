@@ -1,5 +1,6 @@
 package io.github.hjosugi.chatsample;
 
+import java.io.InputStream;
 import java.net.CookieManager;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -8,6 +9,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
@@ -55,6 +57,10 @@ class SampleChatApplicationTests {
 					return FakeAnthropic.text("Found: ", result);
 				}
 				String question = body.get("messages").get(body.get("messages").size() - 1).toString();
+				if (question.contains("long story")) {
+					// 400 words: 20 seconds.
+					return FakeAnthropic.slowText(400);
+				}
 				Matcher orderId = ORDER_ID.matcher(question);
 				if (orderId.find()) {
 					return FakeAnthropic.toolUse("orderStatus", "{\"orderId\": \"" + orderId.group() + "\"}");
@@ -79,7 +85,7 @@ class SampleChatApplicationTests {
 
 	@BeforeEach
 	void forget() {
-		anthropic.requests.clear();
+		anthropic.reset();
 	}
 
 	@Test
@@ -142,6 +148,51 @@ class SampleChatApplicationTests {
 	}
 
 	@Test
+	void stoppingAReplyEndsItAtAnthropic() throws Exception {
+		Browser alice = Browser.signIn(this.port, "alice");
+		CompletableFuture<Void> firstWords = new CompletableFuture<>();
+		WebSocket socket = alice.http.newWebSocketBuilder()
+			.header("Origin", "http://localhost:" + this.port)
+			.buildAsync(URI.create("ws://localhost:" + this.port + "/chat/ws"), new WebSocket.Listener() {
+
+				@Override
+				public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+					if (data.toString().contains("\"text\"")) {
+						firstWords.complete(null);
+					}
+					webSocket.request(1);
+					return null;
+				}
+
+			})
+			.get(10, TimeUnit.SECONDS);
+		socket.sendText(json.writeValueAsString(
+				Map.of("type", "message", "conversationId", "alice-stop", "text", "Tell me a long story")), true);
+		firstWords.get(10, TimeUnit.SECONDS);
+
+		socket.sendText("{\"type\":\"stop\"}", true);
+
+		assertThat(anthropic.clientGone).as("the connection to Anthropic closed").succeedsWithin(Duration.ofSeconds(5));
+		socket.abort();
+	}
+
+	@Test
+	void leavingAReplyEndsItAtAnthropic() throws Exception {
+		Browser alice = Browser.signIn(this.port, "alice");
+		InputStream reply = alice.http
+			.send(alice.chatRequest("Tell me a long story"), HttpResponse.BodyHandlers.ofInputStream())
+			.body();
+		String received = "";
+		while (!received.contains("event:text")) {
+			received += new String(reply.readNBytes(64), StandardCharsets.UTF_8);
+		}
+
+		reply.close();
+
+		assertThat(anthropic.clientGone).as("the connection to Anthropic closed").succeedsWithin(Duration.ofSeconds(5));
+	}
+
+	@Test
 	void aMessageWithoutTheCsrfTokenIsRefused() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
 
@@ -197,9 +248,13 @@ class SampleChatApplicationTests {
 		}
 
 		String chat(String text) throws Exception {
-			HttpResponse<String> response = post("/chat/stream", message(text), this.csrf);
+			HttpResponse<String> response = this.http.send(chatRequest(text), HttpResponse.BodyHandlers.ofString());
 			assertThat(response.statusCode()).isEqualTo(200);
 			return response.body();
+		}
+
+		HttpRequest chatRequest(String text) {
+			return request("/chat/stream", message(text), this.csrf);
 		}
 
 		HttpResponse<String> get(String path) throws Exception {
@@ -207,11 +262,15 @@ class SampleChatApplicationTests {
 		}
 
 		HttpResponse<String> post(String path, String body, Map<String, String> headers) throws Exception {
+			return this.http.send(request(path, body, headers), HttpResponse.BodyHandlers.ofString());
+		}
+
+		private HttpRequest request(String path, String body, Map<String, String> headers) {
 			HttpRequest.Builder request = HttpRequest.newBuilder(uri(path))
 				.header("Content-Type", "application/json")
 				.POST(HttpRequest.BodyPublishers.ofString(body));
 			headers.forEach(request::header);
-			return this.http.send(request.build(), HttpResponse.BodyHandlers.ofString());
+			return request.build();
 		}
 
 		private URI uri(String path) {
