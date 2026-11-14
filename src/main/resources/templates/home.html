@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Shop assistant</title>
+    <style>
+        body { margin: 0 auto; max-width: 48rem; padding: 1rem; font-family: system-ui, sans-serif; }
+        header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+        h1 { font-size: 1.25rem; }
+        nav { display: flex; gap: 1rem; margin: 0.5rem 0 1rem; }
+        nav a[aria-current] { font-weight: 600; text-decoration: none; }
+        .chat { height: 32rem; border: 1px solid #8884; border-radius: 0.75rem; overflow: hidden; }
+        .try { color: #666; font-size: 0.875rem; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Shop assistant</h1>
+    <form th:action="@{/logout}" method="post">
+        Signed in as <strong th:text="${user}">alice</strong>
+        <button type="submit">Sign out</button>
+    </form>
+</header>
+<nav>
+    <a th:href="@{/(transport='sse')}" th:attr="aria-current=${transport == 'sse'} ? 'page'">SSE</a>
+    <a th:href="@{/(transport='websocket')}" th:attr="aria-current=${transport == 'websocket'} ? 'page'">WebSocket</a>
+    <a th:href="@{/chat}">Built-in page</a>
+</nav>
+<div class="chat" th:insert="~{spring-chat/chat :: chat-over(${transport})}"></div>
+<p class="try">Try: “What did I order?”, “Where is A-1001?”, or another user's order, “Where is B-2001?”</p>
+</body>
+</html>
