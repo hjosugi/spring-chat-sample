@@ -157,7 +157,7 @@ final class FakeAnthropic {
 
 	private static String messageStart() {
 		return event("message_start", "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\","
-				+ "\"role\":\"assistant\",\"content\":[],\"model\":\"claude-opus-5-5\",\"stop_reason\":null,"
+				+ "\"role\":\"assistant\",\"content\":[],\"model\":\"claude-haiku-5-5\",\"stop_reason\":null,"
 				+ "\"stop_sequence\":null,\"usage\":{\"input_tokens\":25,\"output_tokens\":1}}}");
 	}
 

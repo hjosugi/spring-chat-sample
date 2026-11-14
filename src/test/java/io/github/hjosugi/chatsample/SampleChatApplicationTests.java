@@ -37,7 +37,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * for the API, which asks for the tools as Claude would.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
-		properties = { "spring.ai.anthropic.api-key=test-key", "spring.ai.anthropic.max-retries=0" })
+		properties = { "spring.ai.anthropic.api-key=test-key", "spring.ai.anthropic.max-retries=0",
+				// Whatever the environment says: a test never talks to a provider.
+				"spring.ai.model.chat=anthropic", "spring.ai.anthropic.chat.model=claude-haiku-5-5" })
 class SampleChatApplicationTests {
 
 	private static final Pattern ORDER_ID = Pattern.compile("[AB]-\\d{4}");
