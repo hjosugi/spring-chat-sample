@@ -40,3 +40,7 @@ Spring AI 2.0.2 does not close the connection of a stream that is cancelled (`Un
 ## Tests
 
 `./mvnw verify` runs the application against a stand-in for the Anthropic API, so it needs no key. It signs in through the login form, takes the CSRF token from the page and asks over SSE and WebSocket, while the stand-in asks for the tools as Claude would. It also stops a long reply, and leaves another, and checks that the stand-in sees the connection close.
+
+## License
+
+[Apache License 2.0](LICENSE)
