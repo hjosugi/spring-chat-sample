@@ -9,6 +9,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The application as a browser uses it: the login form, the page and its CSRF token, then
  * the chat over SSE and WebSocket. Spring AI's own Anthropic client talks to a stand-in
- * for the API, which asks for the tools as Claude would.
+ * for the API, which asks for the tools as Claude would, in a workspace of its own.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
 		properties = { "spring.ai.anthropic.api-key=test-key", "spring.ai.anthropic.max-retries=0",
@@ -44,7 +46,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 				"spring.ai.model.chat=anthropic", "spring.ai.anthropic.chat.model=claude-haiku-5-5" })
 class SampleChatApplicationTests {
 
-	private static final Pattern ORDER_ID = Pattern.compile("[AB]-\\d{4}");
+	private static final Pattern WRITE = Pattern.compile("Write (\\S+) (.+)");
+
+	private static final Pattern RUN = Pattern.compile("Run (.+)");
+
+	private static final Pattern READ = Pattern.compile("Read (\\S+)");
+
+	private static final Path WORKSPACE = workspace();
 
 	private static final FakeAnthropic anthropic = start();
 
@@ -54,26 +62,43 @@ class SampleChatApplicationTests {
 	private int port;
 
 	@Autowired
-	private Orders orders;
+	private Workspace workspace;
+
+	private static Path workspace() {
+		try {
+			return Files.createTempDirectory("agent-workspace");
+		}
+		catch (java.io.IOException ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
 
 	private static FakeAnthropic start() {
 		try {
 			return new FakeAnthropic((body) -> {
 				String result = FakeAnthropic.toolResult(body);
 				if (result != null) {
-					return FakeAnthropic.text("Found: ", result);
+					return FakeAnthropic.text("Done: ", result);
 				}
 				String question = body.get("messages").get(body.get("messages").size() - 1).toString();
 				if (question.contains("long story")) {
 					// 400 words: 20 seconds.
 					return FakeAnthropic.slowText(400);
 				}
-				Matcher orderId = ORDER_ID.matcher(question);
-				if (orderId.find()) {
-					return FakeAnthropic.toolUse(question.contains("Cancel") ? "cancelOrder" : "orderStatus",
-							"{\"orderId\": \"" + orderId.group() + "\"}");
+				Matcher write = WRITE.matcher(text(question));
+				if (write.find()) {
+					return FakeAnthropic.toolUse("writeFile", json.writeValueAsString(
+							Map.of("path", write.group(1), "content", write.group(2))));
 				}
-				return FakeAnthropic.toolUse("myOrders", "{}");
+				Matcher run = RUN.matcher(text(question));
+				if (run.find()) {
+					return FakeAnthropic.toolUse("runCommand", json.writeValueAsString(Map.of("command", run.group(1))));
+				}
+				Matcher read = READ.matcher(text(question));
+				if (read.find()) {
+					return FakeAnthropic.toolUse("readFile", json.writeValueAsString(Map.of("path", read.group(1))));
+				}
+				return FakeAnthropic.toolUse("listFiles", "{\"path\": \".\"}");
 			});
 		}
 		catch (Exception ex) {
@@ -81,9 +106,23 @@ class SampleChatApplicationTests {
 		}
 	}
 
+	/**
+	 * What the user wrote in the last message of a request, which the stand-in sees as JSON.
+	 */
+	private static String text(String message) {
+		try {
+			JsonNode content = json.readTree(message).get("content");
+			return content.isString() ? content.asString() : content.get(0).get("text").asString();
+		}
+		catch (RuntimeException ex) {
+			return "";
+		}
+	}
+
 	@DynamicPropertySource
-	static void anthropicUrl(DynamicPropertyRegistry registry) {
+	static void standIns(DynamicPropertyRegistry registry) {
 		registry.add("spring.ai.anthropic.base-url", anthropic::url);
+		registry.add("agent.workspace", WORKSPACE::toString);
 	}
 
 	@AfterAll
@@ -103,32 +142,38 @@ class SampleChatApplicationTests {
 		HttpResponse<String> home = browser.get("/");
 		assertThat(home.statusCode()).isEqualTo(302);
 		assertThat(home.headers().firstValue("Location")).get().asString().endsWith("/login");
-		assertThat(browser.post("/chat/stream", Browser.message("What did I order?"), Map.of()).statusCode())
+		assertThat(browser.post("/chat/stream", Browser.message("List the files"), Map.of()).statusCode())
 			.isNotEqualTo(200);
 		assertThat(anthropic.requests).isEmpty();
 	}
 
 	@Test
-	void aliceAsksAboutHerOrdersOverSse() throws Exception {
+	void aliceListsHerFilesOverSse() throws Exception {
+		Files.writeString(this.workspace.of("alice").resolve("notes.txt"), "hello");
 		Browser alice = Browser.signIn(this.port, "alice");
 
-		String reply = alice.chat("What did I order?");
+		String reply = alice.chat("List my files");
 
-		assertThat(reply).contains("event:done", "A-1001", "A-1002").doesNotContain("B-2001", "event:error");
+		assertThat(reply).contains("event:done", "notes.txt (5 bytes)").doesNotContain("event:error");
 		JsonNode first = anthropic.requests.get(0);
-		assertThat(first.get("tools").toString()).contains("myOrders", "orderStatus");
-		assertThat(first.get("system").toString()).contains("assistant of a small online shop");
+		assertThat(first.get("tools").toString()).contains("listFiles", "readFile", "searchFiles", "writeFile",
+				"replaceInFile", "runCommand");
+		assertThat(first.get("system").toString()).contains("You are a coding agent");
 	}
 
 	@Test
-	void aliceCannotReadBobsOrder() throws Exception {
+	void aliceCannotReadBobsFiles() throws Exception {
+		Files.writeString(this.workspace.of("bob").resolve("secret.txt"), "bobs secret");
 		Browser alice = Browser.signIn(this.port, "alice");
 
-		assertThat(alice.chat("Where is B-2001?")).contains("has no order B-2001").doesNotContain("Kettle");
+		String reply = alice.chat("Read ../bob/secret.txt");
+
+		assertThat(reply).contains("is outside the workspace").doesNotContain("bobs secret");
 	}
 
 	@Test
-	void bobAsksOverWebSocket() throws Exception {
+	void bobListsHisFilesOverWebSocket() throws Exception {
+		Files.writeString(this.workspace.of("bob").resolve("bobs.txt"), "mine");
 		Browser bob = Browser.signIn(this.port, "bob");
 		CompletableFuture<String> reply = new CompletableFuture<>();
 		StringBuilder frames = new StringBuilder();
@@ -149,9 +194,9 @@ class SampleChatApplicationTests {
 			})
 			.get(10, TimeUnit.SECONDS);
 		socket.sendText(json.writeValueAsString(
-				Map.of("type", "message", "conversationId", "bob-ws", "text", "What did I order?")), true);
+				Map.of("type", "message", "conversationId", "bob-ws", "text", "List my files")), true);
 
-		assertThat(reply.get(15, TimeUnit.SECONDS)).contains("B-2001", "Kettle").doesNotContain("A-1001");
+		assertThat(reply.get(15, TimeUnit.SECONDS)).contains("bobs.txt").doesNotContain("notes.txt");
 		socket.abort();
 	}
 
@@ -201,86 +246,102 @@ class SampleChatApplicationTests {
 	}
 
 	@Test
-	void cancellingAnOrderWaitsForTheUsersAnswerAndCancelsNothing() throws Exception {
+	void writingAFileWaitsForTheUsersAnswerAndWritesNothing() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
 
 		// Its own words: the same words are the same conversation, and another test's answer is in it.
-		String reply = alice.chat("Cancel A-1002 now");
+		String reply = alice.chat("Write waiting.txt now");
 
-		assertThat(reply).contains("event:confirm", "cancelOrder", "A-1002").doesNotContain("event:done", "event:error");
+		assertThat(reply).contains("event:confirm", "writeFile", "waiting.txt").doesNotContain("event:done", "event:error");
 		assertThat(anthropic.requests).hasSize(1);
-		assertThat(anthropic.requests.get(0).get("tools").toString()).contains("cancelOrder");
-		assertThat(status("alice", "A-1002")).isEqualTo(Orders.BEING_PACKED);
+		assertThat(anthropic.requests.get(0).get("tools").toString()).contains("writeFile");
+		assertThat(this.workspace.of("alice").resolve("waiting.txt")).doesNotExist();
 	}
 
 	@Test
-	void allowingTheCancellationCancelsTheOrderAndTheModelTellsSo() throws Exception {
+	void allowingTheWriteWritesTheFileAndTheModelTellsSo() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
-		alice.chat("Cancel A-1003");
+		alice.chat("Write allowed.txt hi there");
 
-		String answer = alice.decide("Cancel A-1003", true);
+		String answer = alice.decide("Write allowed.txt hi there", true);
 
-		assertThat(answer).contains("A-1003 is cancelled", "event:done").doesNotContain("event:error");
-		assertThat(status("alice", "A-1003")).isEqualTo(Orders.CANCELLED);
+		assertThat(answer).contains("Created allowed.txt", "event:done").doesNotContain("event:error");
+		assertThat(this.workspace.of("alice").resolve("allowed.txt")).hasContent("hi there");
 		assertThat(anthropic.requests).hasSize(2);
-		assertThat(anthropic.requests.get(1).toString()).contains("tool_result", "A-1003 is cancelled");
+		assertThat(anthropic.requests.get(1).toString()).contains("tool_result", "Created allowed.txt");
 	}
 
 	@Test
-	void denyingTheCancellationKeepsTheOrderAndTheModelHearsIt() throws Exception {
+	void denyingTheWriteKeepsTheFileOutAndTheModelHearsIt() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
-		alice.chat("Cancel A-1002");
+		alice.chat("Write denied.txt no thanks");
 
-		String answer = alice.decide("Cancel A-1002", false);
+		String answer = alice.decide("Write denied.txt no thanks", false);
 
 		assertThat(answer).contains("event:done").doesNotContain("event:error");
-		assertThat(status("alice", "A-1002")).isEqualTo(Orders.BEING_PACKED);
+		assertThat(this.workspace.of("alice").resolve("denied.txt")).doesNotExist();
 		assertThat(anthropic.requests.get(1).toString()).contains("tool_result", "did not allow");
 	}
 
 	@Test
-	void bobCannotAllowAlicesCancellation() throws Exception {
+	void bobCannotAllowAlicesWrite() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
 		Browser bob = Browser.signIn(this.port, "bob");
-		alice.chat("Cancel A-1004");
+		alice.chat("Write stolen.txt yes");
 
 		// Bob sends the same conversation id: it is not Alice's conversation.
-		String answer = bob.decide("Cancel A-1004", true);
+		String answer = bob.decide("Write stolen.txt yes", true);
 
 		assertThat(answer).contains("event:error").doesNotContain("event:done", "event:text");
-		assertThat(status("alice", "A-1004")).isEqualTo(Orders.BEING_PACKED);
+		assertThat(this.workspace.of("alice").resolve("stolen.txt")).doesNotExist();
+		assertThat(this.workspace.of("bob").resolve("stolen.txt")).doesNotExist();
 		assertThat(anthropic.requests).hasSize(1);
 		// Alice still can.
-		assertThat(alice.decide("Cancel A-1004", true)).contains("A-1004 is cancelled");
+		assertThat(alice.decide("Write stolen.txt yes", true)).contains("Created stolen.txt");
+		assertThat(this.workspace.of("alice").resolve("stolen.txt")).hasContent("yes");
 	}
 
 	@Test
-	void aliceCannotCancelBobsOrderEvenWhenSheAllowsIt() throws Exception {
+	void aliceCannotWriteInBobsWorkspaceEvenWhenSheAllowsIt() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
-		alice.chat("Cancel B-2001");
+		alice.chat("Write ../bob/planted.txt x");
 
-		assertThat(alice.decide("Cancel B-2001", true)).contains("has no order B-2001");
-		assertThat(status("bob", "B-2001")).isEqualTo("delivered on November 9");
+		assertThat(alice.decide("Write ../bob/planted.txt x", true)).contains("is outside the workspace");
+		assertThat(this.workspace.of("bob").resolve("planted.txt")).doesNotExist();
 	}
 
 	@Test
-	void anOrderThatShippedCannotBeCancelled() throws Exception {
+	void aCommandRunsOnlyAfterTheUserAllowedItAndInTheirWorkspace() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
-		alice.chat("Cancel A-1001");
+		String command = "Run echo ran > ran.txt && echo hello";
 
-		assertThat(alice.decide("Cancel A-1001", true)).contains("can no longer be cancelled");
-		assertThat(status("alice", "A-1001")).startsWith("shipped");
+		String reply = alice.chat(command);
+
+		assertThat(reply).contains("event:confirm", "runCommand", "echo ran").doesNotContain("event:done", "event:error");
+		assertThat(this.workspace.of("alice").resolve("ran.txt")).doesNotExist();
+
+		String answer = alice.decide(command, true);
+
+		assertThat(answer).contains("exit code 0", "hello", "event:done").doesNotContain("event:error");
+		assertThat(this.workspace.of("alice").resolve("ran.txt")).exists();
+		assertThat(this.workspace.of("bob").resolve("ran.txt")).doesNotExist();
 	}
 
-	private String status(String user, String order) {
-		return this.orders.find(user, order).orElseThrow().status();
+	@Test
+	void aCommandDoesNotSeeTheKeysOfTheApplication() throws Exception {
+		Browser alice = Browser.signIn(this.port, "alice");
+		alice.chat("Run env");
+
+		String answer = alice.decide("Run env", true);
+
+		assertThat(answer).contains("exit code 0", "HOME=").doesNotContain("ANTHROPIC", "OPENAI", "test-key");
 	}
 
 	@Test
 	void aMessageWithoutTheCsrfTokenIsRefused() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
 
-		assertThat(alice.post("/chat/stream", Browser.message("What did I order?"), Map.of()).statusCode()).isEqualTo(403);
+		assertThat(alice.post("/chat/stream", Browser.message("List the files"), Map.of()).statusCode()).isEqualTo(403);
 		assertThat(anthropic.requests).isEmpty();
 	}
 

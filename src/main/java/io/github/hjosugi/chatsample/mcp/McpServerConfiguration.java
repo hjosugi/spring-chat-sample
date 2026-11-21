@@ -20,59 +20,59 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 
 /**
- * The shop's catalog as an MCP server, at {@code POST /mcp}, when
- * {@code shop.mcp.enabled=true}. Without it, {@code mcp-server.properties} turns Spring
+ * The team's coding guidelines as an MCP server, at {@code POST /mcp}, when
+ * {@code agent.mcp.enabled=true}. Without it, {@code mcp-server.properties} turns Spring
  * AI's MCP server off, and the application has no MCP endpoint.
  * <p>
- * The catalog is public, as a product page is, so an MCP client reaches it without
+ * The guidelines are public, as a handbook is, so an MCP client reaches them without
  * signing in. Everything else stays behind the login of {@code SecurityConfiguration}:
- * the orders belong to a signed-in user and are not on this server. The server is
- * stateless, serves the {@link CatalogMcpServer} methods and nothing else, and refuses
- * requests from browser pages.
+ * the workspaces belong to a signed-in user and the tools that reach them are not on this
+ * server. The server is stateless, serves the {@link GuidelinesMcpServer} methods and
+ * nothing else, and refuses requests from browser pages.
  */
 @Configuration(proxyBeanMethods = false)
 @PropertySource("classpath:io/github/hjosugi/chatsample/mcp/mcp-server.properties")
 class McpServerConfiguration {
 
 	@Configuration(proxyBeanMethods = false)
-	@ConditionalOnBooleanProperty("shop.mcp.enabled")
-	static class CatalogServer {
+	@ConditionalOnBooleanProperty("agent.mcp.enabled")
+	static class GuidelinesServer {
 
 		@Bean
-		Catalog catalog() {
-			return new Catalog();
+		Guidelines guidelines() {
+			return new Guidelines();
 		}
 
 		@Bean
-		CatalogMcpServer catalogMcpServer(Catalog catalog) {
-			return new CatalogMcpServer(catalog);
+		GuidelinesMcpServer guidelinesMcpServer(Guidelines guidelines) {
+			return new GuidelinesMcpServer(guidelines);
 		}
 
 		/*
 		 * What the server serves, listed here rather than scanned (see mcp-server.properties):
-		 * the annotated methods of the catalog, made into specifications as Spring AI's
+		 * the annotated methods of the guidelines, made into specifications as Spring AI's
 		 * scanner would make them.
 		 */
 
 		@Bean
-		List<McpStatelessServerFeatures.SyncToolSpecification> catalogTools(CatalogMcpServer catalog) {
-			return SyncMcpAnnotationProviders.statelessToolSpecifications(List.of(catalog));
+		List<McpStatelessServerFeatures.SyncToolSpecification> guidelinesTools(GuidelinesMcpServer guidelines) {
+			return SyncMcpAnnotationProviders.statelessToolSpecifications(List.of(guidelines));
 		}
 
 		@Bean
-		List<McpStatelessServerFeatures.SyncResourceSpecification> catalogResources(CatalogMcpServer catalog) {
-			return SyncMcpAnnotationProviders.statelessResourceSpecifications(List.of(catalog));
+		List<McpStatelessServerFeatures.SyncResourceSpecification> guidelinesResources(GuidelinesMcpServer guidelines) {
+			return SyncMcpAnnotationProviders.statelessResourceSpecifications(List.of(guidelines));
 		}
 
 		@Bean
-		List<McpStatelessServerFeatures.SyncResourceTemplateSpecification> catalogResourceTemplates(
-				CatalogMcpServer catalog) {
-			return SyncMcpAnnotationProviders.statelessResourceTemplateSpecifications(List.of(catalog));
+		List<McpStatelessServerFeatures.SyncResourceTemplateSpecification> guidelinesResourceTemplates(
+				GuidelinesMcpServer guidelines) {
+			return SyncMcpAnnotationProviders.statelessResourceTemplateSpecifications(List.of(guidelines));
 		}
 
 		@Bean
-		List<McpStatelessServerFeatures.SyncCompletionSpecification> catalogCompletions(CatalogMcpServer catalog) {
-			return SyncMcpAnnotationProviders.statelessCompleteSpecifications(List.of(catalog));
+		List<McpStatelessServerFeatures.SyncCompletionSpecification> guidelinesCompletions(GuidelinesMcpServer guidelines) {
+			return SyncMcpAnnotationProviders.statelessCompleteSpecifications(List.of(guidelines));
 		}
 
 		/**

@@ -29,74 +29,74 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /**
- * The shop with {@code shop.mcp.enabled=true}: Spring AI's MCP client reaches the
- * catalog without signing in, and nothing but the catalog. The rest of the shop still
- * wants a login.
+ * The agent with {@code agent.mcp.enabled=true}: Spring AI's MCP client reaches the
+ * coding guidelines without signing in, and nothing but the guidelines. The rest of the
+ * agent, its workspaces and its tools, still wants a login.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
-		properties = { "shop.mcp.enabled=true", "spring.ai.anthropic.api-key=test-key",
+		properties = { "agent.mcp.enabled=true", "spring.ai.anthropic.api-key=test-key",
 				"spring.ai.model.chat=anthropic", "spring.ai.anthropic.chat.model=claude-haiku-5-5",
 				// The tests also carry the WebFlux server, whose auto-configuration does not
 				// look at the web application type: with both, the server has two transports.
 				"spring.autoconfigure.exclude=org.springframework.ai.mcp.server.webflux.autoconfigure.McpServerStatelessWebFluxAutoConfiguration" })
-class CatalogMcpServerTests {
+class GuidelinesMcpServerTests {
 
 	@Value("${local.server.port}")
 	private int port;
 
 	@Test
-	void anMcpClientReadsTheCatalogWithoutSigningIn() {
+	void anMcpClientReadsTheGuidelinesWithoutSigningIn() {
 		client().run((context) -> {
-			McpSyncClient catalog = McpClients.syncClient(context);
+			McpSyncClient guidelines = McpClients.syncClient(context);
 
-			assertThat(catalog.getServerInfo().name()).isEqualTo("shop-catalog");
-			assertThat(catalog.listTools().tools()).extracting(McpSchema.Tool::name)
-				.containsExactlyInAnyOrder("products", "product");
-			assertThat(catalog.listTools().tools()).allSatisfy(
+			assertThat(guidelines.getServerInfo().name()).isEqualTo("coding-guidelines");
+			assertThat(guidelines.listTools().tools()).extracting(McpSchema.Tool::name)
+				.containsExactlyInAnyOrder("topics", "guideline");
+			assertThat(guidelines.listTools().tools()).allSatisfy(
 					(tool) -> assertThat(tool.annotations().readOnlyHint()).as(tool.name() + " only reads").isTrue());
-			assertThat(ServerProtocolsTests.text(catalog.callTool(new CallToolRequest("products", Map.of()))))
-				.contains("\"id\":\"grinder\"", "\"price\":89.00", "\"inStock\":false");
-			assertThat(ServerProtocolsTests.text(catalog.callTool(new CallToolRequest("product", Map.of("id", "kettle")))))
-				.isEqualTo("Gooseneck kettle (kettle): 59.00 EUR, out of stock");
-			assertThat(catalog.readResource(new ReadResourceRequest("catalog://products/dripper")).contents())
+			assertThat(ServerProtocolsTests.text(guidelines.callTool(new CallToolRequest("topics", Map.of()))))
+				.contains("\"id\":\"java\"", "\"title\":\"Testing\"", "\"id\":\"git\"");
+			assertThat(ServerProtocolsTests.text(guidelines.callTool(new CallToolRequest("guideline", Map.of("id", "git")))))
+				.startsWith("# Git").contains("Write the subject in the imperative");
+			assertThat(guidelines.readResource(new ReadResourceRequest("guidelines://topics/testing")).contents())
 				.singleElement()
 				.satisfies((contents) -> {
-					assertThat(contents.mimeType()).isEqualTo("application/json");
-					assertThat(((TextResourceContents) contents).text())
-						.isEqualTo("{\"id\":\"dripper\",\"name\":\"Ceramic dripper\",\"price\":24.00,\"inStock\":true}");
+					assertThat(contents.mimeType()).isEqualTo("text/markdown");
+					assertThat(((TextResourceContents) contents).text()).startsWith("# Testing")
+						.contains("A test's name is a sentence about the behavior");
 				});
-			assertThat(catalog
-				.completeCompletion(new CompleteRequest(new ResourceReference("catalog://products/{id}"),
-						new CompleteRequest.CompleteArgument("id", "g")))
+			assertThat(guidelines
+				.completeCompletion(new CompleteRequest(new ResourceReference("guidelines://topics/{id}"),
+						new CompleteRequest.CompleteArgument("id", "j")))
 				.completion()
-				.values()).containsExactly("grinder");
+				.values()).containsExactly("java");
 		});
 	}
 
 	@Test
-	void theCatalogServesNoToolOfTheApplicationAndNoOrder() {
+	void theGuidelinesServeNoToolOfTheApplicationAndNoFile() {
 		client().run((context) -> {
-			McpSyncClient catalog = McpClients.syncClient(context);
+			McpSyncClient guidelines = McpClients.syncClient(context);
 
-			// OrderBook below is a ToolCallbackProvider bean, which the server would expose by default.
-			assertThat(catalog.listTools().tools()).extracting(McpSchema.Tool::name).doesNotContain("myOrders");
-			assertThat(ServerProtocolsTests.text(catalog.callTool(new CallToolRequest("products", Map.of()))))
-				.doesNotContain("A-1001", "B-2001");
+			// AgentTools below is a ToolCallbackProvider bean, which the server would expose by default.
+			assertThat(guidelines.listTools().tools()).extracting(McpSchema.Tool::name).doesNotContain("readFile");
+			assertThat(ServerProtocolsTests.text(guidelines.callTool(new CallToolRequest("topics", Map.of()))))
+				.doesNotContain("secret");
 			assertThatExceptionOfType(McpError.class)
-				.isThrownBy(() -> catalog.callTool(new CallToolRequest("myOrders", Map.of())))
-				.satisfies((error) -> assertThat(error.getJsonRpcError().data()).isEqualTo("Tool not found: myOrders"));
+				.isThrownBy(() -> guidelines.callTool(new CallToolRequest("readFile", Map.of("path", "notes.txt"))))
+				.satisfies((error) -> assertThat(error.getJsonRpcError().data()).isEqualTo("Tool not found: readFile"));
 		});
 	}
 
 	@Test
-	void aBrowserPageCannotCallTheCatalog() throws Exception {
+	void aBrowserPageCannotCallTheGuidelines() throws Exception {
 		assertThat(post(Map.of()).statusCode()).isEqualTo(200);
 		assertThat(post(Map.of("Origin", "http://localhost:" + this.port)).statusCode()).isEqualTo(403);
 		assertThat(post(Map.of("Origin", "http://attacker.example")).statusCode()).isEqualTo(403);
 	}
 
 	@Test
-	void theRestOfTheShopStillWantsALogin() throws Exception {
+	void theRestOfTheAgentStillWantsALogin() throws Exception {
 		HttpResponse<String> home = HttpClient.newHttpClient()
 			.send(HttpRequest.newBuilder(URI.create("http://localhost:" + this.port + "/")).build(),
 					HttpResponse.BodyHandlers.ofString());
@@ -109,7 +109,7 @@ class CatalogMcpServerTests {
 
 	private org.springframework.boot.test.context.runner.ApplicationContextRunner client() {
 		return McpClients.httpClient()
-			.withPropertyValues(McpClients.STREAMABLE + "shop.url=http://localhost:" + this.port);
+			.withPropertyValues(McpClients.STREAMABLE + "agent.url=http://localhost:" + this.port);
 	}
 
 	private HttpResponse<String> post(Map<String, String> headers) throws Exception {
@@ -122,20 +122,20 @@ class CatalogMcpServerTests {
 	}
 
 	@TestConfiguration(proxyBeanMethods = false)
-	static class OrderBookAsAToolCallbackProvider {
+	static class AgentToolsAsAToolCallbackProvider {
 
 		@Bean
-		ToolCallbackProvider orderBook() {
-			return MethodToolCallbackProvider.builder().toolObjects(new OrderBook()).build();
+		ToolCallbackProvider agentTools() {
+			return MethodToolCallbackProvider.builder().toolObjects(new AgentTools()).build();
 		}
 
 	}
 
-	static class OrderBook {
+	static class AgentTools {
 
-		@Tool(description = "Lists every order of the shop")
-		String myOrders() {
-			return "A-1001, B-2001";
+		@Tool(description = "Reads a file of a workspace")
+		String readFile(String path) {
+			return "secret of " + path;
 		}
 
 	}

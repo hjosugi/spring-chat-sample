@@ -11,7 +11,7 @@ import org.springframework.security.web.SecurityFilterChain;
 
 /**
  * Everything, the chat included, is for signed-in users: the chat spends the model's
- * tokens, and its tools read the user's orders.
+ * tokens, and its tools change the user's files and run commands.
  */
 @Configuration(proxyBeanMethods = false)
 class SecurityConfiguration {
@@ -25,7 +25,7 @@ class SecurityConfiguration {
 	}
 
 	/**
-	 * Two shoppers whose password is their name. For trying the sample on your own
+	 * Two users whose password is their name. For trying the sample on your own
 	 * computer only.
 	 */
 	@Bean

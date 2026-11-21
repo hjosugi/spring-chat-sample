@@ -5,13 +5,17 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Stands in for the streaming APIs of Anthropic, OpenAI and Gemini with one long reply, a
@@ -19,16 +23,31 @@ import org.apache.commons.logging.LogFactory;
  * of the request tells which of the three the client speaks. A client that stops reading
  * but keeps the connection open is not noticed: the words still fit the socket's buffers.
  * Only a closed connection ends the reply.
+ * <p>
+ * As the stand-in of the coding agent it answers by what the user wrote, as {@link AgentScript}
+ * says, and embeds texts for the guidelines. Only a reply to a question that asks for a
+ * long reply is slow then.
  */
 public final class SlowModel implements AutoCloseable {
 
 	private static final Log logger = LogFactory.getLog(SlowModel.class);
+
+	private static final JsonMapper JSON = JsonMapper.shared();
+
+	/**
+	 * The pause between two words of an answer that is not the long reply.
+	 */
+	private static final Duration ANSWER_PAUSE = Duration.ofMillis(40);
 
 	private final HttpServer server;
 
 	private final int words;
 
 	private final Duration pause;
+
+	private final boolean agent;
+
+	private final AtomicInteger calls = new AtomicInteger();
 
 	private volatile CompletableFuture<Integer> closedByClient = new CompletableFuture<>();
 
@@ -40,8 +59,17 @@ public final class SlowModel implements AutoCloseable {
 	 * @param pause the time between two words
 	 */
 	public SlowModel(int port, int words, Duration pause) throws IOException {
+		this(port, words, pause, false);
+	}
+
+	/**
+	 * @param agent whether it answers as the stand-in of the coding agent does, and not with the
+	 * long reply to anything
+	 */
+	public SlowModel(int port, int words, Duration pause, boolean agent) throws IOException {
 		this.words = words;
 		this.pause = pause;
+		this.agent = agent;
 		this.server = HttpServer.create(new InetSocketAddress("localhost", port), 0);
 		this.server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 		this.server.createContext("/", this::reply);
@@ -73,34 +101,57 @@ public final class SlowModel implements AutoCloseable {
 	}
 
 	private void reply(HttpExchange exchange) throws IOException {
-		exchange.getRequestBody().readAllBytes();
+		byte[] request = exchange.getRequestBody().readAllBytes();
+		String path = exchange.getRequestURI().getPath();
+		if (this.agent && path.contains("embeddings")) {
+			byte[] embeddings = BagOfWords.openAiResponse(JSON.readTree(request)).getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().add("Content-Type", "application/json");
+			exchange.sendResponseHeaders(200, embeddings.length);
+			try (OutputStream out = exchange.getResponseBody()) {
+				out.write(embeddings);
+			}
+			return;
+		}
 		this.closedByClient = new CompletableFuture<>();
 		this.streamedToTheEnd = new CompletableFuture<>();
-		String path = exchange.getRequestURI().getPath();
 		Dialect dialect = path.contains("streamGenerateContent") ? Dialect.GEMINI
 				: path.contains("chat/completions") ? Dialect.OPENAI : Dialect.ANTHROPIC;
-		logger.info("Streaming a reply of %d words, one every %d ms, as %s".formatted(this.words,
-				this.pause.toMillis(), dialect));
+		AgentScript.Plan plan = this.agent ? AgentScript.plan(dialect, JSON.readTree(request)) : AgentScript.Plan.LONG;
+		List<String> pieces = (plan.text() != null) ? pieces(plan.text()) : null;
+		int count = (pieces != null) ? pieces.size() : this.words;
+		Duration pause = (pieces != null) ? ANSWER_PAUSE : this.pause;
+		logger.info((plan.tool() != null) ? "Asking for the tool %s, as %s".formatted(plan.tool(), dialect)
+				: "Streaming a reply of %d words, one every %d ms, as %s".formatted(count, pause.toMillis(), dialect));
 		exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
 		exchange.sendResponseHeaders(200, 0);
 		int sent = 0;
 		try (OutputStream out = exchange.getResponseBody()) {
-			dialect.start(out);
-			for (; sent < this.words; sent++) {
-				Thread.sleep(this.pause);
-				dialect.word(out, "word" + (sent + 1) + " ", sent == this.words - 1);
+			if (plan.tool() != null) {
+				dialect.toolCall(out, this.calls.incrementAndGet(), plan.tool(), plan.arguments());
+				sent = 1;
 			}
-			dialect.end(out, this.words);
-			logger.info("Streamed all %d words: the client kept the connection open to the end".formatted(this.words));
+			else {
+				dialect.start(out);
+				for (; sent < count; sent++) {
+					Thread.sleep(pause);
+					dialect.word(out, (pieces != null) ? pieces.get(sent) : "word" + (sent + 1) + " ", sent == count - 1);
+				}
+				dialect.end(out, count);
+			}
+			logger.info("Streamed all %d words: the client kept the connection open to the end".formatted(count));
 			this.streamedToTheEnd.complete(null);
 		}
 		catch (IOException ex) {
-			logger.info("The client closed the connection after %d of %d words".formatted(sent, this.words));
+			logger.info("The client closed the connection after %d of %d words".formatted(sent, count));
 			this.closedByClient.complete(sent);
 		}
 		catch (InterruptedException ex) {
 			Thread.currentThread().interrupt();
 		}
+	}
+
+	private static List<String> pieces(String text) {
+		return Arrays.stream(text.split("(?<= )")).toList();
 	}
 
 	private static void write(OutputStream out, String event, String data) throws IOException {
@@ -112,7 +163,7 @@ public final class SlowModel implements AutoCloseable {
 	/**
 	 * The server-sent events of one of the three APIs.
 	 */
-	private enum Dialect {
+	enum Dialect {
 
 		ANTHROPIC {
 
@@ -128,7 +179,7 @@ public final class SlowModel implements AutoCloseable {
 			@Override
 			void word(OutputStream out, String word, boolean last) throws IOException {
 				write(out, "content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,"
-						+ "\"delta\":{\"type\":\"text_delta\",\"text\":\"" + word + "\"}}");
+						+ "\"delta\":{\"type\":\"text_delta\",\"text\":" + quote(word) + "}}");
 			}
 
 			@Override
@@ -139,18 +190,43 @@ public final class SlowModel implements AutoCloseable {
 				write(out, "message_stop", "{\"type\":\"message_stop\"}");
 			}
 
+			@Override
+			void toolCall(OutputStream out, int number, String name, String arguments) throws IOException {
+				write(out, "message_start", "{\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"type\":\"message\","
+						+ "\"role\":\"assistant\",\"content\":[],\"model\":\"fake\",\"stop_reason\":null,"
+						+ "\"stop_sequence\":null,\"usage\":{\"input_tokens\":25,\"output_tokens\":1}}}");
+				write(out, "content_block_start", "{\"type\":\"content_block_start\",\"index\":0,\"content_block\":"
+						+ "{\"type\":\"tool_use\",\"id\":\"toolu_" + number + "\",\"name\":" + quote(name)
+						+ ",\"input\":{}}}");
+				write(out, "content_block_delta", "{\"type\":\"content_block_delta\",\"index\":0,"
+						+ "\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":" + quote(arguments) + "}}");
+				write(out, "content_block_stop", "{\"type\":\"content_block_stop\",\"index\":0}");
+				write(out, "message_delta", "{\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\","
+						+ "\"stop_sequence\":null},\"usage\":{\"output_tokens\":15}}");
+				write(out, "message_stop", "{\"type\":\"message_stop\"}");
+			}
+
 		},
 
 		OPENAI {
 
 			@Override
 			void word(OutputStream out, String word, boolean last) throws IOException {
-				write(out, null, chunk("{\"role\":\"assistant\",\"content\":\"" + word + "\"}", "null"));
+				write(out, null, chunk("{\"role\":\"assistant\",\"content\":" + quote(word) + "}", "null"));
 			}
 
 			@Override
 			void end(OutputStream out, int words) throws IOException {
 				write(out, null, chunk("{}", "\"stop\""));
+				write(out, null, "[DONE]");
+			}
+
+			@Override
+			void toolCall(OutputStream out, int number, String name, String arguments) throws IOException {
+				write(out, null, chunk("{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_" + number
+						+ "\",\"type\":\"function\",\"function\":{\"name\":" + quote(name) + ",\"arguments\":"
+						+ quote(arguments) + "}}]}", "null"));
+				write(out, null, chunk("{}", "\"tool_calls\""));
 				write(out, null, "[DONE]");
 			}
 
@@ -166,10 +242,18 @@ public final class SlowModel implements AutoCloseable {
 
 			@Override
 			void word(OutputStream out, String word, boolean last) throws IOException {
-				write(out, null, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"" + word + "\"}],"
+				write(out, null, "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":" + quote(word) + "}],"
 						+ "\"role\":\"model\"}," + (last ? "\"finishReason\":\"STOP\"," : "") + "\"index\":0}],"
 						+ "\"usageMetadata\":{\"promptTokenCount\":25,\"candidatesTokenCount\":1,"
 						+ "\"totalTokenCount\":26},\"modelVersion\":\"fake\"}");
+			}
+
+			@Override
+			void toolCall(OutputStream out, int number, String name, String arguments) throws IOException {
+				write(out, null, "{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call_" + number
+						+ "\",\"name\":" + quote(name) + ",\"args\":" + arguments + "}}],\"role\":\"model\"},"
+						+ "\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":25,"
+						+ "\"candidatesTokenCount\":1,\"totalTokenCount\":26},\"modelVersion\":\"fake\"}");
 			}
 
 		};
@@ -180,6 +264,15 @@ public final class SlowModel implements AutoCloseable {
 		abstract void word(OutputStream out, String word, boolean last) throws IOException;
 
 		void end(OutputStream out, int words) throws IOException {
+		}
+
+		/**
+		 * A reply that asks for a tool, whole: its events from start to end.
+		 */
+		abstract void toolCall(OutputStream out, int number, String name, String arguments) throws IOException;
+
+		private static String quote(String text) {
+			return JSON.writeValueAsString(text);
 		}
 
 	}

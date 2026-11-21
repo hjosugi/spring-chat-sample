@@ -19,8 +19,8 @@
     <properties>
         <java.version>21</java.version>
         <spring-ai.version>2.1.0</spring-ai.version>
-        <!-- Not on Maven Central yet: ./mvnw install in a clone of hjosugi/spring-chat. -->
-        <spring-chat.version>0.1.0-SNAPSHOT</spring-chat.version>
+        <!-- Not on Maven Central yet: ./mvnw install in a clone of hjosugi/spring-chat at v0.1.0. -->
+        <spring-chat.version>0.1.0</spring-chat.version>
     </properties>
 
     <dependencyManagement>

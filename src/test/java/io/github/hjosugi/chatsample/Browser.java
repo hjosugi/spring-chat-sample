@@ -76,6 +76,14 @@ final class Browser {
 	}
 
 	/**
+	 * Answers the tool call of a reply that names its own, as the chat's page does with
+	 * the id that the {@code confirm} event carried.
+	 */
+	String decide(String question, String callId, boolean allow) throws Exception {
+		return reply(request("/chat/stream", decisions(question, callId, allow), this.csrf));
+	}
+
+	/**
 	 * The whole reply to a request, as the events the chat sent. With a limit, so that a
 	 * reply that never ends fails its test and does not hold the build.
 	 */
@@ -128,8 +136,12 @@ final class Browser {
 	 * The user's answer to the one tool call that the stand-in asks for.
 	 */
 	static String decisions(String question, boolean allow) {
+		return decisions(question, "toolu_1", allow);
+	}
+
+	static String decisions(String question, String callId, boolean allow) {
 		return json.writeValueAsString(Map.of("conversationId", conversationOf(question), "decisions",
-				List.of(Map.of("id", "toolu_1", "allow", allow))));
+				List.of(Map.of("id", callId, "allow", allow))));
 	}
 
 }

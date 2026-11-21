@@ -1,4 +1,4 @@
-package io.github.hjosugi.chatsample.help;
+package io.github.hjosugi.chatsample.guidelines;
 
 import java.io.IOException;
 import java.util.List;
@@ -21,7 +21,7 @@ import org.springframework.core.io.ResourceLoader;
 import org.springframework.core.io.support.ResourcePatternUtils;
 
 /**
- * The shop's help pages (shipping, returns, the warranty) read at startup into a vector
+ * The team's coding guidelines (Java, testing, Git) read at startup into a vector
  * store the chat can search, through the ETL pipeline: a Markdown reader, a token
  * splitter, a content formatter and the store as the writer. Only an application with an
  * embedding model gets them; with {@code spring.ai.model.embedding=none}, the default,
@@ -35,17 +35,17 @@ import org.springframework.core.io.support.ResourcePatternUtils;
 // After every auto-configuration that may make the embedding model, whichever it is.
 @AutoConfigureOrder(Ordered.LOWEST_PRECEDENCE)
 @ConditionalOnSingleCandidate(EmbeddingModel.class)
-public class HelpAutoConfiguration {
+public class GuidelinesAutoConfiguration {
 
 	/**
-	 * Where the help pages are.
+	 * Where the guidelines are.
 	 */
-	public static final String PAGES = "classpath:help/*.md";
+	public static final String PAGES = "classpath:guidelines/*.md";
 
 	/**
-	 * The name of the vector store with the help pages.
+	 * The name of the vector store with the guidelines.
 	 */
-	public static final String BEAN_NAME = "helpDocuments";
+	public static final String BEAN_NAME = "guidelines";
 
 	/**
 	 * What the splitter adds to the metadata of each chunk. Models that embed the
@@ -59,7 +59,7 @@ public class HelpAutoConfiguration {
 	 * and the file as its {@code source}.
 	 */
 	@Bean(BEAN_NAME)
-	SimpleVectorStore helpDocuments(EmbeddingModel embeddingModel, ResourceLoader resourceLoader) throws IOException {
+	SimpleVectorStore guidelines(EmbeddingModel embeddingModel, ResourceLoader resourceLoader) throws IOException {
 		SimpleVectorStore store = SimpleVectorStore.builder(embeddingModel).build();
 		TokenTextSplitter splitter = TokenTextSplitter.builder().build();
 		ContentFormatTransformer withoutSplitterKeys = new ContentFormatTransformer(

@@ -37,7 +37,7 @@ class ChatConfigurationTests {
 	}
 
 	@Test
-	void theHelpPagesNeedAKeyOfOpenAiWhoeverAnswers() {
+	void theGuidelinesNeedAKeyOfOpenAiWhoeverAnswers() {
 		MockEnvironment claudeAlone = environment("anthropic", "spring.ai.anthropic.api-key", "a-key")
 			.withProperty("spring.ai.model.embedding", "openai");
 		MockEnvironment claudeAndOpenAi = environment("anthropic", "spring.ai.anthropic.api-key", "a-key")
@@ -51,12 +51,39 @@ class ChatConfigurationTests {
 	}
 
 	@Test
-	void aModelNamedFakeEmbedsNoHelpPages() {
+	void aModelNamedFakeEmbedsNoGuidelines() {
 		// What FakeModelEnvironmentPostProcessor leaves for OPENAI_MODEL=fake.
 		MockEnvironment fake = environment("openai", "spring.ai.openai.api-key", "fake")
 			.withProperty("spring.ai.model.embedding", "openai");
 
 		assertThatThrownBy(() -> new ChatConfiguration(fake))
+			.isInstanceOf(InvalidConfigurationPropertyValueException.class)
+			.hasMessageContaining("fake");
+	}
+
+	@Test
+	void theStandInEmbedsTheGuidelinesForAModelNamedFakeAndForClaude() {
+		// What FakeModelEnvironmentPostProcessor leaves for EMBEDDING_PROVIDER=fake.
+		MockEnvironment fakeChat = environment("openai", "spring.ai.openai.api-key", "fake")
+			.withProperty("spring.ai.model.embedding", "openai")
+			.withProperty("fake-model.embedding", "true");
+		MockEnvironment claude = environment("anthropic", "spring.ai.anthropic.api-key", "a-key")
+			.withProperty("spring.ai.model.embedding", "openai")
+			.withProperty("spring.ai.openai.api-key", "fake")
+			.withProperty("fake-model.embedding", "true");
+
+		assertThatCode(() -> new ChatConfiguration(fakeChat)).doesNotThrowAnyException();
+		assertThatCode(() -> new ChatConfiguration(claude)).doesNotThrowAnyException();
+	}
+
+	@Test
+	void theStandInCannotEmbedForTheRealOpenAi() {
+		// Both use the settings of OpenAI, so the chat would be sent to the stand-in too.
+		MockEnvironment realOpenAi = environment("openai", "spring.ai.openai.api-key", "a-key")
+			.withProperty("spring.ai.model.embedding", "openai")
+			.withProperty("fake-model.embedding", "true");
+
+		assertThatThrownBy(() -> new ChatConfiguration(realOpenAi))
 			.isInstanceOf(InvalidConfigurationPropertyValueException.class)
 			.hasMessageContaining("fake");
 	}

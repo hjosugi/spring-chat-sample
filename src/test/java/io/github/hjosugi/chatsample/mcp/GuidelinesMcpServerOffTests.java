@@ -19,14 +19,14 @@ import org.springframework.web.servlet.function.RouterFunction;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The shop with its own properties: Spring AI's MCP server starter is on the classpath,
+ * The agent with its own properties: Spring AI's MCP server starter is on the classpath,
  * and still there is no MCP server and no new endpoint. {@code /mcp} is a path like any
  * other, behind the login.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT,
 		properties = { "spring.ai.anthropic.api-key=test-key", "spring.ai.model.chat=anthropic",
 				"spring.ai.anthropic.chat.model=claude-haiku-5-5" })
-class CatalogMcpServerOffTests {
+class GuidelinesMcpServerOffTests {
 
 	@Value("${local.server.port}")
 	private int port;
@@ -39,7 +39,7 @@ class CatalogMcpServerOffTests {
 		assertThat(this.context.getBeanNamesForType(McpSyncServer.class)).isEmpty();
 		assertThat(this.context.getBeanNamesForType(McpStatelessSyncServer.class)).isEmpty();
 		assertThat(this.context.getBeanNamesForType(RouterFunction.class)).isEmpty();
-		assertThat(this.context.getBeanNamesForType(CatalogMcpServer.class)).isEmpty();
+		assertThat(this.context.getBeanNamesForType(GuidelinesMcpServer.class)).isEmpty();
 	}
 
 	@Test

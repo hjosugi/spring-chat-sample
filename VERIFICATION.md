@@ -15,18 +15,23 @@ Three tests fail, as the [README](README.md#tests) explains: they reproduce a bu
 
 ## The tests
 
-140 test classes with 1188 test methods, below `src/test/java/io/github/hjosugi/chatsample/`. A parameterized or generated test counts once here and several times in the build.
+143 test classes with 1234 test methods, ten of them in a base class that three classes run, below `src/test/java/io/github/hjosugi/chatsample/`. A parameterized or generated test counts once here and several times in the build.
 
 ### The application
 
-The shop assistant as a browser uses it: the login, the chat over SSE and WebSocket, the tools for the signed-in user, a cancellation that waits for the user, the help pages.
+The coding agent as a browser uses it: the login, the chat over SSE and WebSocket, the tools for the signed-in user's workspace, a write and a command that wait for the user, the coding guidelines.
 
 | Test class | Tests | What it shows |
 | --- | ---: | --- |
-| `ChatConfigurationTests` | 6 | What the application refuses to start with, and what it says then |
+| `ChatConfigurationTests` | 8 | What the application refuses to start with, and what it says then |
 | `ConversationsInADatabaseTests` | 3 | The application with a database and Spring AI's JDBC session starter, which is all it takes for conversations that outlast the application |
-| `HelpPagesInTheChatTests` | 5 | The application with an embedding model, as `EMBEDDING_PROVIDER=openai` starts it |
-| `SampleChatApplicationTests` | 13 | The application as a browser uses it |
+| `GuidelinesInTheChatTests` | 5 | The application with an embedding model, as `EMBEDDING_PROVIDER=openai` starts it |
+| `CodingToolsTests` | 20 | What each tool of the coding agent does, without a model, and what the model is told when a path is missing, too large or outside the workspace |
+| `FakeModelAsAnthropicTests` | 10 | The application with a model named `fake` of Anthropic: the tools, the confirmations and the guidelines, with no key |
+| `FakeModelAsGeminiTests` | 10 | The same, in the format of Google's API |
+| `FakeModelAsOpenAiTests` | 10 | The same, in the format of OpenAI's API |
+| `SampleChatApplicationTests` | 14 | The application as a browser uses it |
+| `WorkspaceTests` | 8 | Where the tools may go: the workspace of the user who asked, and nowhere else, whatever path the model makes up |
 
 ### Chat client, prompts, structured output, advisors, observability
 
@@ -108,11 +113,11 @@ Reference: Retrieval Augmented Generation, Modular RAG, ETL Pipeline, Document R
 | `EtlPipelineTests` | 3 | The ETL pipeline page |
 | `EvaluatorTests` | 9 | The evaluators page |
 | `FileDocumentWriterTests` | 4 | The `FileDocumentWriter` of the writers page |
-| `HelpDocumentsTests` | 6 | The shop's help pages, which `HelpAutoConfiguration` reads into a vector store at startup when the application has an embedding model, and only then |
+| `GuidelinesDocumentsTests` | 6 | The team's coding guidelines, which `GuidelinesAutoConfiguration` reads into a vector store at startup when the application has an embedding model, and only then |
 | `JsonAndTextReaderTests` | 8 | The `JsonReader` and the `TextReader` of the JSON and text reader page |
 | `JsoupDocumentReaderTests` | 7 | The `JsoupDocumentReader` of the HTML reader page, on the page's own sample document |
 | `LlmAsJudgeTests` | 5 | The LLM-as-a-Judge page |
-| `MarkdownDocumentReaderTests` | 6 | The `MarkdownDocumentReader` of the Markdown reader page, on the page's own `code.md` and on a page of the shop's |
+| `MarkdownDocumentReaderTests` | 6 | The `MarkdownDocumentReader` of the Markdown reader page, on the page's own `code.md` and on a page of the guidelines |
 | `MetadataEnricherTests` | 6 | The enrichers of the transformers page, which ask a chat model for keywords or a summary of each document and put the answer into its metadata |
 | `MetadataFilterTests` | 6 | The metadata filters page |
 | `MultiQueryExpanderTests` | 4 | The `MultiQueryExpander` of the Modular RAG page |
@@ -139,8 +144,8 @@ Reference: MCP Client, MCP Server (STDIO, SSE, Streamable HTTP, stateless, and t
 
 | Test class | Tests | What it shows |
 | --- | ---: | --- |
-| `CatalogMcpServerOffTests` | 2 | The shop with its own properties |
-| `CatalogMcpServerTests` | 4 | The shop with `shop.mcp.enabled=true` |
+| `GuidelinesMcpServerOffTests` | 2 | The agent with its own properties |
+| `GuidelinesMcpServerTests` | 4 | The agent with `agent.mcp.enabled=true` |
 | `ClientPropertiesTests` | 5 | The common properties of the client starter, as the server sees their effect |
 | `InteractionsTests` | 9 | What a server with sessions asks of its client while a tool runs, and what it tells it |
 | `McpToolsTests` | 12 | The tools of an MCP server in a `ChatClient`, as the tutorial and "Using MCP Tools" show them |
@@ -301,7 +306,7 @@ Every entry names the test that shows it. The tests assert what Spring AI 2.1.0 
 - **Doc.** Filters share a syntax across stores, not a meaning: for `SimpleVectorStore` a missing value is smaller than any other, so a document without a year matches `year <= 2020`; PGvector matches neither. A dotted key is one flat key. `MetadataFilterTests#builtExpressionsFilterTheSameFilms`, `MetadataFilterTests#aDottedKeyIsOneKeyForTheSimpleStore`, `PgVectorStoreTests#aDocumentWithoutTheKeyDoesNotMatchAComparison`
 - **Know.** By default, a `RetrievalAugmentationAdvisor` that finds nothing replaces the question with "The user query is outside your knowledge base": neither the model nor a tool ever sees it. The sample allows an empty context. `RetrievalAugmentationAdvisorTests#byDefaultAnEmptyContextReplacesTheQuestionWithAnInstructionNotToAnswer`
 - **Know.** The evaluators pass on the bare word only: "YES." fails. `EvaluatorTests#onlyAPlainYesPasses`
-- **Know.** A text splitter adds three keys of its own to every chunk, one of them a random id, and a model that embeds metadata, as OpenAI's does, embeds them. The sample's help pages keep them out. `TokenTextSplitterTests#everyChunkGetsTheMetadataOfItsDocumentAndThreeKeysOfTheSplitter`
+- **Know.** A text splitter adds three keys of its own to every chunk, one of them a random id, and a model that embeds metadata, as OpenAI's does, embeds them. The sample's guidelines keep them out. `TokenTextSplitterTests#everyChunkGetsTheMetadataOfItsDocumentAndThreeKeysOfTheSplitter`
 - **Know.** A document without metadata is embedded, and written to a file, with two line breaks before its text. `OpenAiEmbeddingTests#metadataModeNoneSendsTheTextAfterAnEmptyMetadataBlock`
 - **Know.** The PDF text formatter counts the line break at the end of a page as a line, and pages from one: deleting one bottom line leaves the footer, skipping two pages skips one. `PdfDocumentReaderTests#theTextFormatterDeletesLinesAtTheTopAndTheBottomOfEachPage`
 - **Know.** A semantic cache hit is the text only, without finish reason, usage or model, and `clear()` does nothing on a store other than Redis. `SemanticCacheAdvisorTests#aCachedResponseHasTheTextButNotTheMetadata`, `SemanticCacheAdvisorTests#clearOnAStoreOtherThanRedisDoesNothing`
@@ -311,7 +316,7 @@ Every entry names the test that shows it. The tests assert what Spring AI 2.1.0 
 
 ### Model Context Protocol
 
-- **Bug.** A stateless server with `spring.ai.mcp.server.tool-callback-converter=false` also loses its annotated methods; the pages say the switch stops `ToolCallback` beans only. The shop's catalog server lists its specifications itself for that reason. `McpToolsTests#onAStatelessServerTurningTheConverterOffAlsoDropsTheAnnotatedTools`
+- **Bug.** A stateless server with `spring.ai.mcp.server.tool-callback-converter=false` also loses its annotated methods; the pages say the switch stops `ToolCallback` beans only. The guidelines server lists its specifications itself for that reason. `McpToolsTests#onAStatelessServerTurningTheConverterOffAlsoDropsTheAnnotatedTools`
 - **Bug.** `@McpResource` never publishes its `title` and `annotations`. `ServerAnnotationsTests#mcpResourcePublishesItsUriNameMimeTypeSizeAndMetaButNotItsTitleOrAnnotations`
 - **Bug.** Roots that a client customizer sets are not declared while the annotation scanner is on, which is the default, so a server never asks for them. `InteractionsTests#withTheAnnotationScannerOnTheRootsOfACustomizerAreNotDeclared`
 - **Bug.** `spring.ai.mcp.client.root-change-notification` is read nowhere. `InteractionsTests#theRootChangeNotificationPropertyChangesNothing`

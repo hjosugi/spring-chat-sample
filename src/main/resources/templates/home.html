@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Shop assistant</title>
+    <title>Coding agent</title>
     <style>
         body { margin: 0 auto; max-width: 48rem; padding: 1rem; font-family: system-ui, sans-serif; }
         header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
@@ -16,7 +16,7 @@
 </head>
 <body>
 <header>
-    <h1>Shop assistant</h1>
+    <h1>Coding agent</h1>
     <form th:action="@{/logout}" method="post">
         Signed in as <strong th:text="${user}">alice</strong>
         <button type="submit">Sign out</button>
@@ -28,6 +28,6 @@
     <a th:href="@{/chat}">Built-in page</a>
 </nav>
 <div class="chat" th:insert="~{spring-chat/chat :: chat-over(${transport})}"></div>
-<p class="try">Try: “What did I order?”, “Where is A-1001?”, “Cancel A-1002” (you are asked to allow it), or another user's order, “Where is B-2001?”</p>
+<p class="try">Try: “List the files”, “Write notes.txt: hello” (you are asked to allow it), “Read notes.txt”, “Search for hello”, “Run ls -l” (you are asked as well). The files are yours: another user has a workspace of their own.</p>
 </body>
 </html>

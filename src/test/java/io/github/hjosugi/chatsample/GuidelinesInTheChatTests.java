@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * The application with an embedding model, as {@code EMBEDDING_PROVIDER=openai} starts it:
- * the shop's help pages are embedded at the start, and the sections close to a question
+ * the coding guidelines are embedded at the start, and the sections close to a question
  * go to the chat model with it. Spring AI's own clients talk to two stand-ins: OpenAI's
  * embeddings, with a bag of words for vectors, and Anthropic's messages.
  */
@@ -34,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 				"spring.ai.openai.max-retries=0",
 				// For the bag of words, which is close to a text only by the words they share.
 				// The threshold of the application is for a real model.
-				"shop.help.similarity-threshold=0.15" })
-class HelpPagesInTheChatTests {
+				"agent.guidelines.similarity-threshold=0.15" })
+class GuidelinesInTheChatTests {
 
 	private static final StandIn openAi = new StandIn(BagOfWordsEmbeddingModel::openAiEmbeddings);
 
@@ -47,6 +47,9 @@ class HelpPagesInTheChatTests {
 	@Autowired
 	private SessionService sessions;
 
+	@Autowired
+	private Workspace workspace;
+
 	private static FakeAnthropic anthropic() {
 		try {
 			return new FakeAnthropic((body) -> {
@@ -54,9 +57,9 @@ class HelpPagesInTheChatTests {
 				if (result != null) {
 					return FakeAnthropic.text("Found: ", result);
 				}
-				// The question, and not what the help pages add to it: they speak of orders too.
-				return body.toString().contains("What did I order?") ? FakeAnthropic.toolUse("myOrders", "{}")
-						: FakeAnthropic.text("As the help pages say.");
+				// The question, and not what the guidelines add to it.
+				return body.toString().contains("List the files") ? FakeAnthropic.toolUse("listFiles", "{\"path\": \".\"}")
+						: FakeAnthropic.text("As the guidelines say.");
 			});
 		}
 		catch (Exception ex) {
@@ -65,9 +68,11 @@ class HelpPagesInTheChatTests {
 	}
 
 	@DynamicPropertySource
-	static void standIns(DynamicPropertyRegistry registry) {
+	static void standIns(DynamicPropertyRegistry registry) throws java.io.IOException {
 		registry.add("spring.ai.anthropic.base-url", anthropic::url);
 		registry.add("spring.ai.openai.base-url", openAi::url);
+		java.nio.file.Path workspace = java.nio.file.Files.createTempDirectory("agent-workspace");
+		registry.add("agent.workspace", workspace::toString);
 	}
 
 	@AfterAll
@@ -82,41 +87,42 @@ class HelpPagesInTheChatTests {
 	}
 
 	@Test
-	void theHelpPagesWereEmbeddedWhenTheApplicationStarted() {
+	void theGuidelinesWereEmbeddedWhenTheApplicationStarted() {
 		List<String> embedded = openAi.requests.stream()
 			.flatMap((request) -> request.body().get("input").valueStream())
 			.map(JsonNode::asString)
 			.toList();
 
-		assertThat(embedded).anySatisfy((text) -> assertThat(text).contains("title: Refunds", "5 working days"));
+		assertThat(embedded).anySatisfy(
+				(text) -> assertThat(text).contains("title: Names", "A test's name is a sentence about the behavior"));
 		assertThat(openAi.requests).allSatisfy(
 				(request) -> assertThat(request.body().get("model").asString()).isEqualTo("text-embedding-3-small"));
 	}
 
 	@Test
-	void aQuestionThatTheHelpPagesAnswerReachesTheModelWithTheirSections() throws Exception {
+	void aQuestionThatTheGuidelinesAnswerReachesTheModelWithTheirSections() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
 
-		String reply = alice.chat("When does my refund arrive?");
+		String reply = alice.chat("How should I name a test?");
 
-		assertThat(reply).contains("As the help pages say.", "event:done").doesNotContain("event:error");
+		assertThat(reply).contains("As the guidelines say.", "event:done").doesNotContain("event:error");
 		String asked = lastUserText(anthropic.requests.get(0));
-		assertThat(asked).startsWith("When does my refund arrive?")
-			.contains("help pages", "The refund goes back to the original payment method within 5 working days");
-		// And the tools are still there, for a question about an order.
-		assertThat(anthropic.requests.get(0).get("tools").toString()).contains("myOrders");
+		assertThat(asked).startsWith("How should I name a test?")
+			.contains("coding guidelines", "A test's name is a sentence about the behavior");
+		// And the tools are still there, for a question about a file.
+		assertThat(anthropic.requests.get(0).get("tools").toString()).contains("listFiles");
 	}
 
 	@Test
 	void theConversationKeepsTheQuestionAsTheUserWroteIt() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
-		alice.chat("How long does the warranty last?");
+		alice.chat("Can a public method return null?");
 
-		List<Message> conversation = conversationThatStartsWith("alice", "How long does the warranty last?");
+		List<Message> conversation = conversationThatStartsWith("alice", "Can a public method return null?");
 
 		assertThat(conversation).hasSize(2);
-		assertThat(conversation.get(1).getText()).isEqualTo("As the help pages say.");
-		assertThat(lastUserText(anthropic.requests.get(0))).contains("How long does the warranty last?", "---------");
+		assertThat(conversation.get(1).getText()).isEqualTo("As the guidelines say.");
+		assertThat(lastUserText(anthropic.requests.get(0))).contains("Can a public method return null?", "---------");
 	}
 
 	@Test
@@ -129,15 +135,19 @@ class HelpPagesInTheChatTests {
 	}
 
 	@Test
-	void aQuestionAboutAnOrderIsStillAnsweredWithTheTools() throws Exception {
+	void aQuestionAboutFilesIsStillAnsweredWithTheToolsWhenTheGuidelinesComeWithIt() throws Exception {
+		java.nio.file.Files.writeString(this.workspace.of("bob").resolve("bobs.txt"), "mine");
 		Browser bob = Browser.signIn(this.port, "bob");
 
-		String reply = bob.chat("What did I order?");
+		String reply = bob.chat("List the files and tell me how to name a test");
 
-		assertThat(reply).contains("B-2001", "Kettle", "event:done").doesNotContain("event:error");
-		// The second request of the turn brings the tool's result, and the question with it.
+		assertThat(reply).contains("bobs.txt", "event:done").doesNotContain("event:error");
+		// The second request of the turn brings the tool's result, and the question with the
+		// sections that were close to it: the advisor searches once for each round.
 		assertThat(anthropic.requests).hasSize(2);
-		assertThat(anthropic.requests.get(1).toString()).contains("tool_result", "What did I order?");
+		assertThat(anthropic.requests.get(0).toString()).contains("A test's name is a sentence about the behavior");
+		assertThat(anthropic.requests.get(1).toString()).contains("tool_result", "name a test",
+				"A test's name is a sentence about the behavior");
 	}
 
 	/**

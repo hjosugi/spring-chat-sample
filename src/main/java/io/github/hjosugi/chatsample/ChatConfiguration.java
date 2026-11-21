@@ -3,7 +3,7 @@ package io.github.hjosugi.chatsample;
 import java.util.List;
 import java.util.Map;
 
-import io.github.hjosugi.chatsample.help.HelpAutoConfiguration;
+import io.github.hjosugi.chatsample.guidelines.GuidelinesAutoConfiguration;
 import io.github.hjosugi.springchat.ChatPromptCustomizer;
 
 import org.springframework.ai.chat.client.advisor.api.Advisor;
@@ -29,15 +29,15 @@ class ChatConfiguration {
 			"OPENAI_API_KEY", "google-genai", "GEMINI_API_KEY");
 
 	/**
-	 * What the user's question becomes when help pages are close to it. The default of
-	 * Spring AI tells the model to answer from the pages and nothing else, which would
-	 * keep it from looking up an order.
+	 * What the user's question becomes when guidelines are close to it. The default of
+	 * Spring AI tells the model to answer from the sections and nothing else, which would
+	 * keep it from reading a file.
 	 */
-	static final String HELP_PAGES_PROMPT = """
+	static final String GUIDELINES_PROMPT = """
 			{query}
 
-			These sections of the shop's help pages may answer the question. Use them for questions \
-			about shipping, returns and the warranty. For the user's own orders, use the tools.
+			These sections of the team's coding guidelines may apply. Follow them when you write or \
+			change code. For the user's files, use the tools.
 
 			---------------------
 			{context}
@@ -63,41 +63,51 @@ class ChatConfiguration {
 		String embedding = environment.getProperty("spring.ai.model.embedding", "none");
 		if (!List.of("none", "openai").contains(embedding)) {
 			throw new InvalidConfigurationPropertyValueException("spring.ai.model.embedding", embedding,
-					"Set the EMBEDDING_PROVIDER environment variable to openai, or leave it unset.");
+					"Set the EMBEDDING_PROVIDER environment variable to openai or fake, or leave it unset.");
 		}
 		String openAiKey = environment.getProperty("spring.ai.openai.api-key");
-		// The stand-in of a model named "fake" writes replies, and embeds nothing.
-		if (embedding.equals("openai") && (!StringUtils.hasText(openAiKey) || openAiKey.equalsIgnoreCase("fake"))) {
+		boolean fake = "fake".equalsIgnoreCase(openAiKey);
+		if (environment.getProperty("fake-model.embedding", Boolean.class, false)) {
+			// The stand-in embeds as OpenAI does, with the settings of OpenAI.
+			if (!fake) {
+				throw new InvalidConfigurationPropertyValueException("spring.ai.model.embedding", "fake",
+						"The stand-in embeds as OpenAI does, and the chat answers with the real OpenAI: "
+								+ "name its model \"fake\" too, or choose another provider.");
+			}
+		}
+		// The stand-in of a model named "fake" writes replies, and embeds nothing of its own accord.
+		else if (embedding.equals("openai") && (!StringUtils.hasText(openAiKey) || fake)) {
 			throw new InvalidConfigurationPropertyValueException("spring.ai.openai.api-key", openAiKey,
-					"The help pages are embedded with OpenAI, and not by a model named \"fake\": "
-							+ "set the OPENAI_API_KEY environment variable, or leave EMBEDDING_PROVIDER unset.");
+					"The coding guidelines are embedded with OpenAI, and not by a model named \"fake\": "
+							+ "set the OPENAI_API_KEY environment variable, or use EMBEDDING_PROVIDER=fake, "
+							+ "or leave it unset.");
 		}
 	}
 
 	/**
-	 * Gives every chat prompt the order tools, for the user who asked. The system prompt
+	 * Gives every chat prompt the coding tools, for the user who asked. The system prompt
 	 * and the conversation memory of spring-chat stay.
 	 */
 	@Bean
-	ChatPromptCustomizer orderToolsForTheUser(OrderTools tools) {
+	ChatPromptCustomizer codingToolsForTheUser(CodingTools tools) {
 		// SecurityConfiguration lets no one chat without signing in, so there is a principal.
 		return (prompt, request) -> prompt.tools(tools)
-			.toolContext(Map.of(OrderTools.USER, request.principal().getName()));
+			.toolContext(Map.of(CodingTools.USER, request.principal().getName()));
 	}
 
 	/**
-	 * Lets a reply use the shop's help pages, when the application has them, which takes
-	 * an embedding model: see {@link HelpAutoConfiguration}. The sections close to the
-	 * question go to the model with it, and nowhere else: the advisor comes after the
-	 * conversation memory, so the conversation keeps the question as the user wrote it.
+	 * Lets a reply use the team's coding guidelines, when the application has them, which
+	 * takes an embedding model: see {@link GuidelinesAutoConfiguration}. The sections close
+	 * to the question go to the model with it, and nowhere else: the advisor comes after
+	 * the conversation memory, so the conversation keeps the question as the user wrote it.
 	 * That puts it inside the tool loop, where it searches once for each round of a turn.
 	 * A question that no section is close to goes to the model as it is.
 	 */
 	@Bean
-	ChatPromptCustomizer helpPagesForTheQuestion(
-			@Qualifier(HelpAutoConfiguration.BEAN_NAME) ObjectProvider<VectorStore> helpPages,
-			@Value("${shop.help.similarity-threshold}") double similarityThreshold) {
-		VectorStore pages = helpPages.getIfAvailable();
+	ChatPromptCustomizer guidelinesForTheQuestion(
+			@Qualifier(GuidelinesAutoConfiguration.BEAN_NAME) ObjectProvider<VectorStore> guidelines,
+			@Value("${agent.guidelines.similarity-threshold}") double similarityThreshold) {
+		VectorStore pages = guidelines.getIfAvailable();
 		if (pages == null) {
 			return (prompt, request) -> {
 			};
@@ -109,7 +119,7 @@ class ChatConfiguration {
 				.similarityThreshold(similarityThreshold)
 				.build())
 			.queryAugmenter(ContextualQueryAugmenter.builder()
-				.promptTemplate(new PromptTemplate(HELP_PAGES_PROMPT))
+				.promptTemplate(new PromptTemplate(GUIDELINES_PROMPT))
 				// Without it, a question that no section is close to never reaches the model.
 				.allowEmptyContext(true)
 				.build())

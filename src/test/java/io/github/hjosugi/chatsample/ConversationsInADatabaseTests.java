@@ -54,7 +54,7 @@ class ConversationsInADatabaseTests {
 	private JdbcTemplate jdbc;
 
 	@Autowired
-	private Orders orders;
+	private Workspace workspace;
 
 	private static FakeAnthropic anthropic() {
 		try {
@@ -63,8 +63,8 @@ class ConversationsInADatabaseTests {
 				if (result != null) {
 					return FakeAnthropic.text("Done: ", result);
 				}
-				return body.toString().contains("Cancel A-1002")
-						? FakeAnthropic.toolUse("cancelOrder", "{\"orderId\": \"A-1002\"}")
+				return body.toString().contains("Write kept.txt")
+						? FakeAnthropic.toolUse("writeFile", "{\"path\": \"kept.txt\", \"content\": \"kept\"}")
 						: FakeAnthropic.text("Hello, ", "Alice.");
 			});
 		}
@@ -74,8 +74,10 @@ class ConversationsInADatabaseTests {
 	}
 
 	@DynamicPropertySource
-	static void anthropicUrl(DynamicPropertyRegistry registry) {
+	static void standIns(DynamicPropertyRegistry registry) throws java.io.IOException {
 		registry.add("spring.ai.anthropic.base-url", anthropic::url);
+		java.nio.file.Path workspace = java.nio.file.Files.createTempDirectory("agent-workspace");
+		registry.add("agent.workspace", workspace::toString);
 	}
 
 	@AfterAll
@@ -113,15 +115,15 @@ class ConversationsInADatabaseTests {
 	void aReplyThatWaitsForTheUserIsContinuedFromTheDatabase() throws Exception {
 		Browser alice = Browser.signIn(this.port, "alice");
 
-		assertThat(alice.chat("Cancel A-1002")).contains("event:confirm", "cancelOrder");
-		assertThat(conversationThatStartsWith("alice", "Cancel A-1002")).extracting(Message::getMessageType)
+		assertThat(alice.chat("Write kept.txt")).contains("event:confirm", "writeFile");
+		assertThat(conversationThatStartsWith("alice", "Write kept.txt")).extracting(Message::getMessageType)
 			.containsExactly(MessageType.USER, MessageType.ASSISTANT);
-		assertThat(this.orders.find("alice", "A-1002").orElseThrow().status()).isEqualTo(Orders.BEING_PACKED);
+		assertThat(this.workspace.of("alice").resolve("kept.txt")).doesNotExist();
 
-		assertThat(alice.decide("Cancel A-1002", true)).contains("A-1002 is cancelled", "event:done");
+		assertThat(alice.decide("Write kept.txt", true)).contains("Created kept.txt", "event:done");
 
-		assertThat(this.orders.find("alice", "A-1002").orElseThrow().status()).isEqualTo(Orders.CANCELLED);
-		assertThat(conversationThatStartsWith("alice", "Cancel A-1002")).extracting(Message::getMessageType)
+		assertThat(this.workspace.of("alice").resolve("kept.txt")).hasContent("kept");
+		assertThat(conversationThatStartsWith("alice", "Write kept.txt")).extracting(Message::getMessageType)
 			.containsExactly(MessageType.USER, MessageType.ASSISTANT, MessageType.TOOL, MessageType.ASSISTANT);
 	}
 
