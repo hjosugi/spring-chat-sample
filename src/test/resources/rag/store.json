@@ -1,0 +1,15 @@
+{
+  "store": {
+    "name": "Coffee gear",
+    "books": [
+      {
+        "title": "The Coffee Bible",
+        "description": "Everything about brewing at home."
+      },
+      {
+        "title": "Grind",
+        "description": "Burr grinders explained."
+      }
+    ]
+  }
+}

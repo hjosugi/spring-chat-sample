@@ -1,0 +1,24 @@
+name: rag-pgvector-compose-test
+
+services:
+  # Spring Boot knows a service by its image; it does not know pgvector/pgvector as Postgres,
+  # so the label says what it is.
+  pgvector:
+    image: pgvector/pgvector:0.8.7-pg18-trixie
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: help
+    ports:
+      - "5432"
+    labels:
+      org.springframework.boot.service-connection: postgres
+  # The same, without the label: Spring Boot leaves it alone.
+  unlabelled:
+    image: pgvector/pgvector:0.8.7-pg18-trixie
+    environment:
+      POSTGRES_USER: other
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: other
+    ports:
+      - "5432"
